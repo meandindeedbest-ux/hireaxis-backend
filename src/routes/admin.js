@@ -75,6 +75,12 @@ const orgSchema = new mongoose.Schema({
     lastScraped: Date,
   },
 
+  // Available interview positions for this org
+  roles: [{
+    title: String,
+    department: String,
+  }],
+
   // Plan & billing
   plan: {
     type: String,
@@ -559,18 +565,22 @@ publicRouter.get("/org/:slug/ai-context", async (req, res) => {
   }
 });
 
-// GET /api/org/:slug/roles — Public: active roles for this org
+// GET /api/org/:slug/roles — Public: available positions for this org
 publicRouter.get("/org/:slug/roles", async (req, res) => {
   try {
     const org = await Org.findOne({ slug: req.params.slug });
     if (!org) return res.json({ roles: [] });
 
-    // Find roles linked to this org's company
+    // Return roles stored directly on the org
+    if (org.roles && org.roles.length > 0) {
+      return res.json({ roles: org.roles });
+    }
+
+    // Fallback: try linked company roles
     const Role = mongoose.models.Role;
     if (!Role || !org.companyId) return res.json({ roles: [] });
-
     const roles = await Role.find({ companyId: org.companyId, status: "active" })
-      .select("title department channel maxDurationMinutes")
+      .select("title department")
       .sort({ title: 1 });
     res.json({ roles });
   } catch (e) {
