@@ -12,6 +12,7 @@ import { startPolling } from './services/conversationPoller.js';
 
 // Route imports
 import authRoutes from './routes/auth.js';
+
 import roleRoutes from './routes/roles.js';
 import interviewRoutes from './routes/interviews.js';
 import candidateRoutes from './routes/candidates.js';
@@ -19,7 +20,7 @@ import webhookRoutes from './routes/webhooks.js';
 import twilioRoutes from './routes/twilio.js';
 import portalRoutes from './routes/portal.js';
 import analyticsRoutes from './routes/analytics.js';
-import adminRoutes from './routes/admin.js';
+import adminRoutes, { publicRouter as orgPublicRoutes } from './routes/admin.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -47,6 +48,7 @@ app.get('/health', (req, res) => {
 
 // ─── Public Routes ───
 app.use('/uploads', express.static('uploads'));
+app.use('/api', orgPublicRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/portal', portalRoutes);
