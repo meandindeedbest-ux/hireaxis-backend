@@ -1,3 +1,4 @@
+
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -19,8 +20,6 @@ import webhookRoutes from './routes/webhooks.js';
 import twilioRoutes from './routes/twilio.js';
 import analyticsRoutes from './routes/analytics.js';
 import portalRoutes from './routes/portal.js';
-import analyticsRoutes from './routes/analytics.js';
-import adminRoutes from './routes/admin.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -47,9 +46,7 @@ app.get('/health', (req, res) => {
 });
 
 // ─── Public Routes ───
-app.use('/uploads', express.static('uploads'));
 app.use('/api/auth', authRoutes);
-app.use('/api/admin', adminRoutes);
 app.use('/api/portal', portalRoutes);
 app.use('/api/twilio', twilioRoutes);
 app.use('/api/webhooks', webhookRoutes);
