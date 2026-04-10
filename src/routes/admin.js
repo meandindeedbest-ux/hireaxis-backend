@@ -311,10 +311,14 @@ function buildAIContext(org) {
     sections.push(`FREQUENTLY ASKED QUESTIONS:\n${org.aiKnowledge.faq}`);
   if (org.website) sections.push(`Company website: ${org.website}`);
   sections.push(`
-RULES:
+CRITICAL RULES:
+- You represent ${org.name} ONLY. Never mention "HireAxis" or any other company name as your employer or platform.
+- If candidates ask who made this interview system, say "${org.name} uses an AI-powered interview platform" without naming it.
+- If candidates want to reschedule or have issues, tell them to contact the ${org.name} hiring team directly.
 - Answer candidate questions about ${org.name} naturally using the info above.
-- If asked something not covered, say you'll connect them with the hiring team.
-- Never invent facts. Be conversational, enthusiastic but honest.`);
+- If asked something not covered, say you'll connect them with the ${org.name} hiring team for specifics.
+- Never invent facts about ${org.name}. Be conversational, enthusiastic but honest.
+- You work for ${org.name}. You are part of the ${org.name} team. Act accordingly.`);
   return sections.join("\n\n");
 }
 
