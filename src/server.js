@@ -17,7 +17,6 @@ import interviewRoutes from './routes/interviews.js';
 import candidateRoutes from './routes/candidates.js';
 import webhookRoutes from './routes/webhooks.js';
 import twilioRoutes from './routes/twilio.js';
-import analyticsRoutes from './routes/analytics.js';
 import portalRoutes from './routes/portal.js';
 import analyticsRoutes from './routes/analytics.js';
 import adminRoutes from './routes/admin.js';
