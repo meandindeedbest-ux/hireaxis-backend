@@ -12,6 +12,8 @@ import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import OpenAI from "openai";
 
+import { syncAgentForOrg, deleteAgent as deleteElevenLabsAgent, getAvailableVoices } from '../services/elevenlabs-sync.js';
+
 const router = Router();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -74,6 +76,10 @@ const orgSchema = new mongoose.Schema({
     scrapedContent: String,
     lastScraped: Date,
   },
+
+  // ElevenLabs agent (auto-created per org)
+  agentId: String, // ElevenLabs agent ID — set automatically on save
+  voice: { type: String, default: "rachel" }, // Voice key from available voices
 
   // Available interview positions for this org
   roles: [{
@@ -361,6 +367,14 @@ router.post("/orgs", async (req, res) => {
   try {
     const org = new Org(req.body);
     await org.save();
+
+    // Auto-create ElevenLabs agent
+    const agentId = await syncAgentForOrg(org);
+    if (agentId && agentId !== org.agentId) {
+      org.agentId = agentId;
+      await org.save();
+    }
+
     res.status(201).json(org);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -375,6 +389,14 @@ router.put("/orgs/:id", async (req, res) => {
       runValidators: true,
     });
     if (!org) return res.status(404).json({ error: "Not found" });
+
+    // Sync ElevenLabs agent with updated info
+    const agentId = await syncAgentForOrg(org);
+    if (agentId && agentId !== org.agentId) {
+      org.agentId = agentId;
+      await org.save();
+    }
+
     res.json(org);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -384,11 +406,22 @@ router.put("/orgs/:id", async (req, res) => {
 // DELETE /api/admin/orgs/:id
 router.delete("/orgs/:id", async (req, res) => {
   try {
+    const org = await Org.findById(req.params.id);
+    if (!org) return res.status(404).json({ error: "Not found" });
+
+    // Delete ElevenLabs agent
+    if (org.agentId) await deleteElevenLabsAgent(org.agentId);
+
     await Org.findByIdAndDelete(req.params.id);
     res.json({ message: "Deleted" });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/admin/voices — List available voices for admin portal
+router.get("/voices", (req, res) => {
+  res.json({ voices: getAvailableVoices() });
 });
 
 // POST /api/admin/orgs/upload-logo
@@ -535,6 +568,7 @@ publicRouter.get("/org/:slug", async (req, res) => {
       logoUrl: org.logoUrl,
       website: org.website,
       industry: org.industry,
+      agentId: org.agentId, // ElevenLabs agent for this org
       brand: effectiveBrand,
       interviewer: {
         name: org.interviewer?.name || "Hiring Manager",
