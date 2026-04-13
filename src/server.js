@@ -37,7 +37,17 @@ const apiLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later.' }
 });
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+});
 
+const portalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many requests. Please try again later.' },
+});
 app.use('/api/twilio', express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '10mb' }));
 
@@ -49,9 +59,9 @@ app.get('/health', (req, res) => {
 // ─── Public Routes ───
 app.use('/uploads', express.static('uploads'));
 app.use('/api', orgPublicRoutes);
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/portal', portalRoutes);
+app.use('/api/portal', portalLimiter, portalRoutes);
 app.use('/api/twilio', twilioRoutes);
 app.use('/api/webhooks', webhookRoutes);
 
