@@ -41,13 +41,25 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 3,
   message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const key = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+    console.log('[RATE-LIMIT] Auth request from:', key);
+    return key;
+  },
 });
 
 const portalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 30,
   message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.headers['x-forwarded-for'] || 'unknown',
 });
+
+
 app.use('/api/twilio', express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '10mb' }));
 
