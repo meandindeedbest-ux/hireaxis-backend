@@ -115,12 +115,6 @@ function buildBody(org) {
           llm: "gpt-4o",
           temperature: 0.7,
           max_tokens: 200,
-          built_in_tools: [
-            {
-              name: "end_call",
-              description: "End the call after all interview questions have been asked and the closing message has been delivered. Call this tool immediately after saying goodbye."
-            }
-          ],
         },
       },
       tts: { voice_id: getVoiceId(org), model_id: "eleven_turbo_v2", stability: 0.5, similarity_boost: 0.75, optimize_streaming_latency: 3 },
