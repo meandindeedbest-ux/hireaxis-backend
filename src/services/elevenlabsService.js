@@ -134,7 +134,7 @@ export function buildInterviewPrompt(role) {
 export async function listConversations(limit = 30) {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
   try {
-    return await apiCall('GET', `/convai/conversations?agent_id=${agentId}&page_size=${limit}`);
+    return await apiCall('GET', `/convai/conversations?page_size=${limit}`);
   } catch (error) {
     logger.error('Failed to list conversations:', { error: error.message });
     return { conversations: [] };
