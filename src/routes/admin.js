@@ -77,6 +77,9 @@ const orgSchema = new mongoose.Schema({
     lastScraped: Date,
   },
 
+  // Custom interview script — overrides AI-generated questions when present
+  customInterviewScript: String,
+
   // ElevenLabs agent (auto-created per org)
   agentId: String, // ElevenLabs agent ID — set automatically on save
   voice: { type: String, default: "rachel" }, // Voice key from available voices
