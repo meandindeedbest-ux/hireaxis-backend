@@ -1,13 +1,11 @@
 // ═══════════════════════════════════════════════════════════════
-// ELEVENLABS AGENT SYNC SERVICE
-// Auto-creates/updates an ElevenLabs agent per organization
-// Called when org is saved in admin portal
+// ELEVENLABS AGENT SYNC SERVICE v2
+// Auto-creates/updates ElevenLabs agent per org with dynamic role
 // ═══════════════════════════════════════════════════════════════
 
 const ELEVENLABS_API = "https://api.elevenlabs.io/v1";
 const API_KEY = process.env.ELEVENLABS_API_KEY;
 
-// Available voices — add more from ElevenLabs voice library
 const VOICES = {
   rachel: { id: "21m00Tcm4TlvDq8ikWAM", label: "Rachel — Warm, professional (F)" },
   sarah: { id: "EXAVITQu4vr4xnSDxMaL", label: "Sarah — Friendly, clear (F)" },
@@ -17,252 +15,122 @@ const VOICES = {
   daniel: { id: "onwK4e9ZLuTAKqWW03F9", label: "Daniel — Confident, deep (M)" },
 };
 
-// Build the interview system prompt from org data
-function buildInterviewPrompt(org) {
-  const companyName = org.name;
-  const interviewerName = org.interviewer?.name || "Hiring Manager";
-
-  let prompt = `You are ${interviewerName}, a professional job interviewer at ${companyName}. You are conducting a live voice interview. Be warm, professional, and encouraging — like a senior hiring manager who genuinely wants to find great people.
-
-INTERVIEW STRUCTURE (20 minutes total):
-1. GREETING (1-2 min): The candidate has already heard your first message. Confirm their name and the role. Make them comfortable with light small talk.
-2. BACKGROUND (3-4 min): Ask about their professional background. Listen actively and ask 1-2 follow-ups based on what they share.
-3. ROLE-SPECIFIC QUESTIONS (8-10 min): Ask 4-5 relevant questions. Start easier, get harder. After each answer, acknowledge what they said before the next question.
-4. BEHAVIORAL (3-4 min): Ask 1-2 situational questions. "Tell me about a time when..."
-5. CANDIDATE QUESTIONS (2-3 min): Ask if they have questions. Answer using the company info below.
-6. CLOSING (1 min): Thank them. The hiring team will review and respond within 24-48 hours.
-
-CONVERSATION RULES:
-- NEVER mention "HireAxis", "ElevenLabs", "AI", "artificial intelligence", or "language model". You are ${interviewerName} from ${companyName}.
-- If asked "Are you a real person?" say: "I'm part of the hiring team here at ${companyName}. Let's focus on getting to know you — that's what matters today."
-- If asked to reschedule, say: "I understand. Please reach out to our hiring team at ${companyName} directly and they'll find a better time."
-- Keep responses SHORT — 2-3 sentences max. Listen more than you talk.
-- Use natural acknowledgments: "Mmhmm", "Got it", "That makes sense", "Interesting"
-- Show genuine interest: "Oh that's interesting", "I'd love to hear more about that"
-- One question at a time, then listen.
-- If short answer, probe: "Could you elaborate?" or "Can you give me a specific example?"
-- If off topic, redirect gently: "That's great context. Coming back to the role, I'm curious about..."
-- Transition naturally between topics.
-- If candidate seems nervous: "Take your time, there's no rush"
-
-VOICE OUTPUT RULES:
-- Format for text-to-speech. No bullet points, no markdown, no code.
-- Write emails phonetically: "team at ${companyName.toLowerCase().replace(/\s+/g, '')} dot com"
-- Write URLs phonetically: "${companyName}'s website"
-- Short, conversational sentences only.
-- Don't start responses with your name or "Interviewer:".`;
-
-  // Add company knowledge
-  if (org.about) prompt += `\n\nABOUT ${companyName.toUpperCase()}:\n${org.about}`;
-  if (org.aiKnowledge?.companyInfo) prompt += `\n\nCOMPANY INFORMATION:\n${org.aiKnowledge.companyInfo}`;
-  if (org.aiKnowledge?.benefits) prompt += `\n\nBENEFITS & PERKS:\n${org.aiKnowledge.benefits}`;
-  if (org.aiKnowledge?.culture) prompt += `\n\nCULTURE & VALUES:\n${org.aiKnowledge.culture}`;
-  if (org.aiKnowledge?.faq) prompt += `\n\nFREQUENTLY ASKED QUESTIONS:\nWhen candidates ask these, use these answers:\n${org.aiKnowledge.faq}`;
-  if (org.website) prompt += `\n\nCompany website: ${org.website}`;
-
-  return prompt;
-}
-
-// Build the first message the AI says when call connects
-function buildFirstMessage(org) {
-  const interviewerName = org.interviewer?.name || "the hiring team";
-  const companyName = org.name;
-  return `Hi there, welcome! I'm ${interviewerName} from ${companyName}. Thank you so much for joining us today, I'm really glad you could make it. Before we get started, could you tell me your name?`;
-}
-
-// Get voice ID from org settings
 function getVoiceId(org) {
-  // If org has a specific voice selected
   if (org.voice && VOICES[org.voice]) return VOICES[org.voice].id;
-  // Default based on interviewer name heuristic
   const name = (org.interviewer?.name || "").toLowerCase();
-  if (name.includes("sarah") || name.includes("rachel") || name.includes("charlotte") || name.includes("jessica") || name.includes("emily") || name.includes("anna")) return VOICES.sarah.id;
-  if (name.includes("adam") || name.includes("josh") || name.includes("daniel") || name.includes("michael") || name.includes("james")) return VOICES.adam.id;
-  return VOICES.rachel.id; // Default: Rachel
+  if (["sarah","rachel","charlotte","jessica","emily","anna","lisa","maria"].some(n => name.includes(n))) return VOICES.sarah.id;
+  if (["adam","josh","daniel","michael","james","david","robert","alex"].some(n => name.includes(n))) return VOICES.adam.id;
+  return VOICES.rachel.id;
 }
 
-// ═══════════════════════════════════════════
-// CREATE a new ElevenLabs agent for an org
-// ═══════════════════════════════════════════
+function buildFirstMessage(org) {
+  const n = org.interviewer?.name || "the hiring team";
+  return `Hi there, welcome! I'm ${n} from ${org.name}. Thank you so much for joining us today for the {{role_title}} interview. I'm really looking forward to learning more about you. Could you start by telling me your name?`;
+}
+
+function buildPrompt(org) {
+  const co = org.name;
+  const iv = org.interviewer?.name || "Hiring Manager";
+
+  let p = `You are ${iv}, a professional job interviewer at ${co}. You are conducting a live voice interview for the {{role_title}} position. Be warm, professional, and encouraging.
+
+THE ROLE: You are interviewing for the {{role_title}} position at ${co}. Tailor ALL questions to this specific role. Ask questions that test the skills, knowledge, and experience needed for a {{role_title}}.
+
+INTERVIEW STRUCTURE (20 minutes):
+1. GREETING (1-2 min): Confirm their name. Mention the {{role_title}} role. Be warm.
+2. BACKGROUND (3-4 min): Ask about relevant experience for {{role_title}}. Follow up.
+3. ROLE-SPECIFIC QUESTIONS (8-10 min): 4-5 questions specific to {{role_title}}. If it's engineering, ask technical. If support, ask about customers. If sales, ask about closing. Start easy, get harder. Acknowledge answers before next question.
+4. BEHAVIORAL (3-4 min): 1-2 situational questions relevant to {{role_title}} challenges.
+5. CANDIDATE QUESTIONS (2-3 min): Let them ask about the {{role_title}} role or ${co}.
+6. CLOSING (1 min): Thank them. Hiring team responds within 24-48 hours.
+
+RULES:
+- NEVER mention "HireAxis", "ElevenLabs", "AI", "artificial intelligence", or "language model".
+- If asked "Are you real?": "I'm part of the hiring team at ${co}. Let's focus on you."
+- If asked to reschedule: "Please reach out to our hiring team at ${co} directly."
+- Keep responses to 2-3 sentences. Listen more than talk.
+- Use: "Mmhmm", "Got it", "That makes sense", "Interesting"
+- One question at a time. If short answer, probe deeper.
+- If off topic, redirect gently.
+- If nervous: "Take your time, no rush."
+
+VOICE RULES:
+- No bullet points, markdown, or code. Short conversational sentences.
+- Write emails phonetically. Don't start with your name.`;
+
+  if (org.interviewer?.personality) p += `\n\nPERSONALITY: ${org.interviewer.personality}`;
+  if (org.about) p += `\n\nABOUT ${co.toUpperCase()}:\n${org.about}`;
+  if (org.aiKnowledge?.companyInfo) p += `\n\nCOMPANY INFO:\n${org.aiKnowledge.companyInfo}`;
+  if (org.aiKnowledge?.benefits) p += `\n\nBENEFITS:\n${org.aiKnowledge.benefits}`;
+  if (org.aiKnowledge?.culture) p += `\n\nCULTURE:\n${org.aiKnowledge.culture}`;
+  if (org.aiKnowledge?.faq) p += `\n\nFAQ:\n${org.aiKnowledge.faq}`;
+  if (org.website) p += `\n\nWebsite: ${org.website}`;
+
+  return p;
+}
+
+function buildBody(org) {
+  return {
+    name: `HireAxis — ${org.name}`,
+    conversation_config: {
+      agent: {
+        first_message: buildFirstMessage(org),
+        language: "en",
+        dynamic_variables: {
+          dynamic_variable_placeholders: {
+            role_title: "Open Position",
+            candidate_name: "Candidate",
+            company_name: org.name,
+          },
+        },
+        prompt: { prompt: buildPrompt(org), llm: "gpt-4o", temperature: 0.7, max_tokens: 200 },
+      },
+      tts: { voice_id: getVoiceId(org), model_id: "eleven_turbo_v2", stability: 0.5, similarity_boost: 0.75, optimize_streaming_latency: 3 },
+      turn: { turn_timeout: 10, silence_end_call_timeout: 120, turn_eagerness: "normal" },
+      conversation: { max_duration_seconds: 1200 },
+    },
+    platform_settings: {
+      widget: { variant: "compact", avatar: { type: "orb", color_1: org.brand?.primaryColor || "#2563eb", color_2: org.brand?.accentColor || "#059669" } },
+    },
+  };
+}
+
 export async function createAgent(org) {
   if (!API_KEY) throw new Error("ELEVENLABS_API_KEY not set");
-
-  const prompt = buildInterviewPrompt(org);
-  const firstMessage = buildFirstMessage(org);
-  const voiceId = getVoiceId(org);
-
-  const body = {
-    name: `HireAxis — ${org.name}`,
-    conversation_config: {
-      agent: {
-        first_message: firstMessage,
-        language: "en",
-        prompt: {
-          prompt: prompt,
-          llm: "gpt-4o",
-          temperature: 0.7,
-          max_tokens: 200,
-        },
-      },
-      tts: {
-        voice_id: voiceId,
-        model_id: "eleven_turbo_v2",
-        stability: 0.5,
-        similarity_boost: 0.75,
-        optimize_streaming_latency: 3,
-      },
-      turn: {
-        turn_timeout: 10,
-        silence_end_call_timeout: 120,
-        turn_eagerness: "normal",
-      },
-      conversation: {
-        max_duration_seconds: 1200, // 20 minutes
-      },
-    },
-    platform_settings: {
-      widget: {
-        variant: "compact",
-        avatar: {
-          type: "orb",
-          color_1: org.brand?.primaryColor || "#2563eb",
-          color_2: org.brand?.accentColor || "#059669",
-        },
-      },
-    },
-  };
-
-  const response = await fetch(`${ELEVENLABS_API}/convai/agents/create`, {
-    method: "POST",
-    headers: {
-      "xi-api-key": API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+  const r = await fetch(`${ELEVENLABS_API}/convai/agents/create`, {
+    method: "POST", headers: { "xi-api-key": API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(buildBody(org)),
   });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`ElevenLabs create failed: ${response.status} — ${err}`);
-  }
-
-  const data = await response.json();
-  console.log(`[ELEVENLABS] Created agent for ${org.name}: ${data.agent_id}`);
-  return data.agent_id;
+  if (!r.ok) throw new Error(`ElevenLabs create failed: ${r.status} — ${await r.text()}`);
+  const d = await r.json();
+  console.log(`[ELEVENLABS] Created agent for ${org.name}: ${d.agent_id}`);
+  return d.agent_id;
 }
 
-// ═══════════════════════════════════════════
-// UPDATE an existing ElevenLabs agent
-// ═══════════════════════════════════════════
 export async function updateAgent(agentId, org) {
   if (!API_KEY) throw new Error("ELEVENLABS_API_KEY not set");
-
-  const prompt = buildInterviewPrompt(org);
-  const firstMessage = buildFirstMessage(org);
-  const voiceId = getVoiceId(org);
-
-  const body = {
-    name: `HireAxis — ${org.name}`,
-    conversation_config: {
-      agent: {
-        first_message: firstMessage,
-        language: "en",
-        prompt: {
-          prompt: prompt,
-          llm: "gpt-4o",
-          temperature: 0.7,
-          max_tokens: 200,
-        },
-      },
-      tts: {
-        voice_id: voiceId,
-        model_id: "eleven_turbo_v2",
-        stability: 0.5,
-        similarity_boost: 0.75,
-        optimize_streaming_latency: 3,
-      },
-      turn: {
-        turn_timeout: 10,
-        silence_end_call_timeout: 120,
-        turn_eagerness: "normal",
-      },
-      conversation: {
-        max_duration_seconds: 1200,
-      },
-    },
-    platform_settings: {
-      widget: {
-        variant: "compact",
-        avatar: {
-          type: "orb",
-          color_1: org.brand?.primaryColor || "#2563eb",
-          color_2: org.brand?.accentColor || "#059669",
-        },
-      },
-    },
-  };
-
-  const response = await fetch(`${ELEVENLABS_API}/convai/agents/${agentId}`, {
-    method: "PATCH",
-    headers: {
-      "xi-api-key": API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+  const r = await fetch(`${ELEVENLABS_API}/convai/agents/${agentId}`, {
+    method: "PATCH", headers: { "xi-api-key": API_KEY, "Content-Type": "application/json" }, body: JSON.stringify(buildBody(org)),
   });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`ElevenLabs update failed: ${response.status} — ${err}`);
-  }
-
+  if (!r.ok) throw new Error(`ElevenLabs update failed: ${r.status} — ${await r.text()}`);
   console.log(`[ELEVENLABS] Updated agent ${agentId} for ${org.name}`);
   return agentId;
 }
 
-// ═══════════════════════════════════════════
-// DELETE an ElevenLabs agent
-// ═══════════════════════════════════════════
 export async function deleteAgent(agentId) {
   if (!API_KEY || !agentId) return;
-
-  const response = await fetch(`${ELEVENLABS_API}/convai/agents/${agentId}`, {
-    method: "DELETE",
-    headers: { "xi-api-key": API_KEY },
-  });
-
-  if (response.ok) {
-    console.log(`[ELEVENLABS] Deleted agent ${agentId}`);
-  }
+  await fetch(`${ELEVENLABS_API}/convai/agents/${agentId}`, { method: "DELETE", headers: { "xi-api-key": API_KEY } });
+  console.log(`[ELEVENLABS] Deleted agent ${agentId}`);
 }
 
-// ═══════════════════════════════════════════
-// SYNC — create or update agent for an org
-// Called from admin routes when org is saved
-// ═══════════════════════════════════════════
 export async function syncAgentForOrg(org) {
   try {
-    if (org.agentId) {
-      // Update existing agent
-      await updateAgent(org.agentId, org);
-      return org.agentId;
-    } else {
-      // Create new agent
-      const agentId = await createAgent(org);
-      return agentId;
-    }
-  } catch (error) {
-    console.error(`[ELEVENLABS] Sync failed for ${org.name}:`, error.message);
-    // Don't throw — org save should still succeed even if agent sync fails
+    return org.agentId ? await updateAgent(org.agentId, org) : await createAgent(org);
+  } catch (e) {
+    console.error(`[ELEVENLABS] Sync failed for ${org.name}:`, e.message);
     return null;
   }
 }
 
-// Export available voices for admin portal dropdown
 export function getAvailableVoices() {
-  return Object.entries(VOICES).map(([key, val]) => ({
-    key,
-    id: val.id,
-    label: val.label,
-  }));
+  return Object.entries(VOICES).map(([key, v]) => ({ key, id: v.id, label: v.label }));
 }
