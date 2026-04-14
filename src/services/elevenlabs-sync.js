@@ -42,7 +42,7 @@ CRITICAL RULES:
 - Keep responses conversational and warm. One question at a time. Wait for their answer before the next question.
 - After each answer, briefly acknowledge it naturally: "Got it", "Thanks for sharing that", "Okay, great".
 - No bullet points, markdown, or code in your responses. Short conversational sentences.
-- When you have finished asking ALL questions, thank the candidate warmly, tell them the hiring team will review their responses and get back within 24-48 hours, wish them a great day, and then end the call.
+- When you have finished asking ALL questions, thank the candidate warmly, tell them the hiring team will review their responses and get back within 24-48 hours, wish them a great day, and then immediately use the end_call tool to end the conversation. Do NOT wait for the candidate to hang up.
 
 CUSTOM INTERVIEW SCRIPT — Follow this EXACTLY in order:
 ${org.customInterviewScript}`;
@@ -79,7 +79,7 @@ RULES:
 - If off topic, redirect gently.
 - If nervous: "Take your time, no rush."
 
-- When you have finished asking ALL questions and the closing message, use the end_call tool to terminate the conversation automatically. Do NOT wait for the candidate to end the call.
+- When you have finished asking ALL questions and the closing message, use the end_call tool to terminate the conversation automatically. Do NOT wait for the candidate to end the call. Say your goodbye, pause 2 seconds, then call end_call.
 
 VOICE RULES:
 - No bullet points, markdown, or code. Short conversational sentences.
@@ -110,7 +110,18 @@ function buildBody(org) {
             company_name: org.name,
           },
         },
-        prompt: { prompt: buildPrompt(org), llm: "gpt-4o", temperature: 0.7, max_tokens: 200 },
+        prompt: {
+          prompt: buildPrompt(org),
+          llm: "gpt-4o",
+          temperature: 0.7,
+          max_tokens: 200,
+          built_in_tools: [
+            {
+              name: "end_call",
+              description: "End the call after all interview questions have been asked and the closing message has been delivered. Call this tool immediately after saying goodbye."
+            }
+          ],
+        },
       },
       tts: { voice_id: getVoiceId(org), model_id: "eleven_turbo_v2", stability: 0.5, similarity_boost: 0.75, optimize_streaming_latency: 3 },
       turn: { turn_timeout: 10, silence_end_call_timeout: 120, turn_eagerness: "normal" },
