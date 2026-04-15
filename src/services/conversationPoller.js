@@ -5,16 +5,33 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { listConversations, getConversationTranscript } from './elevenlabsService.js';
-import Interview from '../models/Interview.js';
-import { Company } from '../models/Company.js';
-import { generateScorecard } from './llmService.js';
+import mongoose from 'mongoose';
 import { logger } from '../utils/logger.js';
+
+// Import models after they're registered - use mongoose.models as fallback
+import '../models/Interview.js';
+import '../models/Company.js';
+
+// Try to import scorecard generator
+let generateScorecard;
+try {
+  const llm = await import('./llmService.js');
+  generateScorecard = llm.generateScorecard || llm.default?.generateScorecard;
+} catch (e) {
+  // Scorecard generation will be skipped
+}
 
 // In-memory set of processed conversation IDs (persisted in DB too)
 const processedConversations = new Set();
 
+// Safe model accessors
+const getInterview = () => mongoose.models.Interview;
+const getCompany = () => mongoose.models.Company;
+
 async function initProcessedSet() {
   if (processedConversations.size > 0) return;
+  const Interview = getInterview();
+  if (!Interview) return;
   try {
     const processed = await Interview.find({ elevenlabsConversationId: { $exists: true } })
       .select('elevenlabsConversationId')
@@ -58,6 +75,8 @@ export async function pollCompletedConversations() {
 async function processConversation(conversationId) {
   try {
     // Skip if already in DB
+    const Interview = getInterview();
+    if (!Interview) { logger.error('Interview model not registered'); return; }
     const existing = await Interview.findOne({ elevenlabsConversationId: conversationId });
     if (existing) {
       logger.info('Conversation already processed:', { conversationId });
@@ -100,7 +119,8 @@ async function processConversation(conversationId) {
     }
 
     // Try to find the company (for scorecard context)
-    const company = await Company.findOne({});
+    const Company = mongoose.models.Company;
+    const company = Company ? await Company.findOne({}) : null;
 
     // Detect candidate name from transcript
     const candidateName = detectCandidateName(finalTranscript);
@@ -110,14 +130,16 @@ async function processConversation(conversationId) {
 
     // ─── Generate scorecard via OpenAI ───
     let scorecard = null;
-    try {
-      logger.info('Generating scorecard:', { conversationId });
-      scorecard = await generateScorecard(finalTranscript, {
-        role: role || 'General',
-        company: company?.name || 'Unknown'
-      });
-    } catch (e) {
-      logger.error('Scorecard generation failed:', { conversationId, error: e.message });
+    if (generateScorecard) {
+      try {
+        logger.info('Generating scorecard:', { conversationId });
+        scorecard = await generateScorecard(finalTranscript, {
+          role: role || 'General',
+          company: company?.name || 'Unknown'
+        });
+      } catch (e) {
+        logger.error('Scorecard generation failed:', { conversationId, error: e.message });
+      }
     }
 
     // ─── Save Interview to MongoDB ───
