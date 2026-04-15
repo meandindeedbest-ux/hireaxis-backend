@@ -216,4 +216,13 @@ function detectRoleFromTranscript(transcript) {
   return null;
 }
 
-export default { pollCompletedConversations };
+// ─── startPolling: called by server.js to begin the polling interval ───
+export function startPolling(intervalMs = 60000) {
+  logger.info(`Conversation poller starting (interval: ${intervalMs}ms)`);
+  // Run once immediately, then on interval
+  pollCompletedConversations();
+  setInterval(pollCompletedConversations, intervalMs);
+}
+
+export { pollCompletedConversations };
+export default { startPolling, pollCompletedConversations };
