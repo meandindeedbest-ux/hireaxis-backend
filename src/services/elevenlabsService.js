@@ -132,7 +132,6 @@ export function buildInterviewPrompt(role) {
 
 // ─── List recent conversations ───
 export async function listConversations(limit = 30) {
-  const agentId = process.env.ELEVENLABS_AGENT_ID;
   try {
     return await apiCall('GET', `/convai/conversations?page_size=${limit}`);
   } catch (error) {
