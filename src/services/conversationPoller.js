@@ -120,15 +120,34 @@ async function processConversation(conversationId) {
       return;
     }
 
-    // Try to find the company (for scorecard context)
+    // Try to find the company and role from DB
     const Company = mongoose.models.Company;
+    const Role = mongoose.models.Role;
     const company = Company ? await Company.findOne({}) : null;
+    
+    if (!company) {
+      logger.error('No company found in DB, cannot save interview');
+      return;
+    }
 
     // Detect candidate name from transcript
     const candidateName = detectCandidateName(finalTranscript);
 
     // Detect role from transcript
-    const role = detectRoleFromTranscript(finalTranscript);
+    const roleName = detectRoleFromTranscript(finalTranscript);
+    
+    // Try to find matching role in DB, or use first active role
+    let roleDoc = null;
+    if (Role) {
+      if (roleName) {
+        roleDoc = await Role.findOne({ companyId: company._id, title: new RegExp(roleName, 'i') });
+      }
+      if (!roleDoc) {
+        roleDoc = await Role.findOne({ companyId: company._id, status: 'active' });
+      }
+    }
+    // If no role found, create a placeholder
+    const roleId = roleDoc?._id || new mongoose.Types.ObjectId();
 
     // ─── Generate scorecard via OpenAI ───
     let scorecard = null;
@@ -137,8 +156,8 @@ async function processConversation(conversationId) {
       try {
         logger.info('Generating scorecard:', { conversationId });
         scorecard = await scorecardFn(finalTranscript, {
-          role: role || 'General',
-          company: company?.name || 'Unknown'
+          role: roleName || roleDoc?.title || 'General',
+          company: company.name
         });
       } catch (e) {
         logger.error('Scorecard generation failed:', { conversationId, error: e.message });
@@ -146,13 +165,9 @@ async function processConversation(conversationId) {
     }
 
     // ─── Save Interview to MongoDB ───
-    // Schema requires: companyId, roleId, candidate.name, channel
-    // Use a placeholder ObjectId for roleId if we can't detect one
-    const placeholderId = new mongoose.Types.ObjectId();
-
     const interview = new Interview({
-      companyId: company?._id || placeholderId,
-      roleId: placeholderId,
+      companyId: company._id,
+      roleId: roleId,
       elevenlabsConversationId: conversationId,
       
       candidate: {
@@ -166,7 +181,7 @@ async function processConversation(conversationId) {
 
       // THE KEY PART — save the full transcript array
       transcript: finalTranscript.map(t => ({
-        speaker: t.speaker,  // 'ai' or 'candidate'
+        speaker: t.speaker,
         text: t.text,
         timestamp: t.timestamp || 0
       })),
@@ -179,8 +194,9 @@ async function processConversation(conversationId) {
     logger.info('Interview saved to DB:', {
       conversationId,
       interviewId: interview._id,
+      companyId: company._id,
       candidateName,
-      role,
+      role: roleName,
       transcriptEntries: finalTranscript.length,
       hasScorecard: !!scorecard
     });
