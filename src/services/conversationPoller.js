@@ -8,25 +8,27 @@ import { listConversations, getConversationTranscript } from './elevenlabsServic
 import mongoose from 'mongoose';
 import { logger } from '../utils/logger.js';
 
-// Import models after they're registered - use mongoose.models as fallback
-import '../models/Interview.js';
-import '../models/Company.js';
-
-// Try to import scorecard generator
-let generateScorecard;
-try {
-  const llm = await import('./llmService.js');
-  generateScorecard = llm.generateScorecard || llm.default?.generateScorecard;
-} catch (e) {
-  // Scorecard generation will be skipped
-}
-
 // In-memory set of processed conversation IDs (persisted in DB too)
 const processedConversations = new Set();
 
-// Safe model accessors
-const getInterview = () => mongoose.models.Interview;
+// Lazy model accessors — models are registered by server.js before polling starts
+const getInterview = () => mongoose.models.Interview || mongoose.model('Interview');
 const getCompany = () => mongoose.models.Company;
+
+// Lazy scorecard function loader
+let _generateScorecard = null;
+let _scorecardLoaded = false;
+async function loadScorecard() {
+  if (_scorecardLoaded) return _generateScorecard;
+  _scorecardLoaded = true;
+  try {
+    const llm = await import('./llmService.js');
+    _generateScorecard = llm.generateScorecard || llm.default?.generateScorecard || null;
+  } catch (e) {
+    _generateScorecard = null;
+  }
+  return _generateScorecard;
+}
 
 async function initProcessedSet() {
   if (processedConversations.size > 0) return;
@@ -130,10 +132,11 @@ async function processConversation(conversationId) {
 
     // ─── Generate scorecard via OpenAI ───
     let scorecard = null;
-    if (generateScorecard) {
+    const scorecardFn = await loadScorecard();
+    if (scorecardFn) {
       try {
         logger.info('Generating scorecard:', { conversationId });
-        scorecard = await generateScorecard(finalTranscript, {
+        scorecard = await scorecardFn(finalTranscript, {
           role: role || 'General',
           company: company?.name || 'Unknown'
         });
