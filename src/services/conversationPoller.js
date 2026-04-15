@@ -12,7 +12,7 @@ import { logger } from '../utils/logger.js';
 const processedConversations = new Set();
 
 // Lazy model accessors — models are registered by server.js before polling starts
-const getInterview = () => mongoose.models.Interview || mongoose.model('Interview');
+const getInterview = () => mongoose.models.Interview;
 const getCompany = () => mongoose.models.Company;
 
 // Lazy scorecard function loader
@@ -146,15 +146,23 @@ async function processConversation(conversationId) {
     }
 
     // ─── Save Interview to MongoDB ───
+    // Schema requires: companyId, roleId, candidate.name, channel
+    // Use a placeholder ObjectId for roleId if we can't detect one
+    const placeholderId = new mongoose.Types.ObjectId();
+
     const interview = new Interview({
+      companyId: company?._id || placeholderId,
+      roleId: placeholderId,
       elevenlabsConversationId: conversationId,
-      candidateName: candidateName || 'Unknown Candidate',
-      role: role || 'Open Position',
-      company: company?._id,
-      companyName: company?.name || 'Unknown',
-      duration: duration || 0,
+      
+      candidate: {
+        name: candidateName || 'Unknown Candidate',
+      },
+      
+      channel: 'phone',
       status: 'completed',
       completedAt: new Date(),
+      durationSeconds: duration || 0,
 
       // THE KEY PART — save the full transcript array
       transcript: finalTranscript.map(t => ({
@@ -164,7 +172,7 @@ async function processConversation(conversationId) {
       })),
 
       // Save scorecard if generated
-      scorecard: scorecard || null,
+      scorecard: scorecard || undefined,
     });
 
     await interview.save();
