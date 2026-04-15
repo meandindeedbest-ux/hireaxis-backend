@@ -97,10 +97,15 @@ async function processConversation(conversationId) {
     if (!company) return;
 
     // Detect role from transcript
-    const role = await detectRoleFromTranscript(finalTranscript, company._id);
-    if (!role) {
+        if (!role) {
       logger.warn('Could not detect role:', { conversationId });
       return;
+    }let role = await detectRoleFromTranscript(finalTranscript, company._id);
+    if (!role) {
+      // Fallback: create or find a default role so interview still saves
+      role = await Role.findOne({ companyId: company._id }) 
+        || await Role.create({ companyId: company._id, title: 'General Interview', status: 'active', channel: 'phone', maxDurationMinutes: 20 });
+      logger.warn('Using fallback role:', { conversationId, roleId: role._id });
     }
 
     // Extract candidate name
