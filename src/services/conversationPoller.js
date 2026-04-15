@@ -46,7 +46,7 @@ async function initProcessedSet() {
 }
 
 // ─── Main poll function (called on interval from server.js) ───
-export async function pollCompletedConversations() {
+async function pollCompletedConversations() {
   try {
     await initProcessedSet();
 
@@ -217,12 +217,11 @@ function detectRoleFromTranscript(transcript) {
 }
 
 // ─── startPolling: called by server.js to begin the polling interval ───
-export function startPolling(intervalMs = 60000) {
+function startPolling(intervalMs = 60000) {
   logger.info(`Conversation poller starting (interval: ${intervalMs}ms)`);
   // Run once immediately, then on interval
   pollCompletedConversations();
   setInterval(pollCompletedConversations, intervalMs);
 }
 
-export { pollCompletedConversations };
-export default { startPolling, pollCompletedConversations };
+export { pollCompletedConversations, startPolling };
