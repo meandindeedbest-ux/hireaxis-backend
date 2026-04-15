@@ -1,56 +1,51 @@
-import { logger } from '../utils/logger.js';
+// ═══════════════════════════════════════════════════════════════
+// CONVERSATION POLLER v2
+// Polls ElevenLabs for completed conversations, saves transcript
+// to Interview document in MongoDB, generates scorecard via OpenAI
+// ═══════════════════════════════════════════════════════════════
+
 import { listConversations, getConversationTranscript } from './elevenlabsService.js';
+import Interview from '../models/Interview.js';
+import Company from '../models/Company.js';
 import { generateScorecard } from './llmService.js';
-import { Interview } from '../models/Interview.js';
-import { Role } from '../models/Role.js';
-import { Company } from '../models/Company.js';
+import logger from '../utils/logger.js';
 
-// Track processed conversations in memory AND check database
+// In-memory set of processed conversation IDs (persisted in DB too)
 const processedConversations = new Set();
-let initialized = false;
 
-// On first run, load all existing conversation IDs from DB so we don't reprocess them
 async function initProcessedSet() {
-  if (initialized) return;
+  if (processedConversations.size > 0) return;
   try {
-    const existing = await Interview.find(
-      { elevenlabsConversationId: { $exists: true, $ne: null } },
-      'elevenlabsConversationId'
-    ).lean();
-    for (const i of existing) {
-      if (i.elevenlabsConversationId) {
-        processedConversations.add(i.elevenlabsConversationId);
-      }
-    }
-    initialized = true;
-    logger.info('Poller initialized — loaded processed conversations:', { count: processedConversations.size });
+    const processed = await Interview.find({ elevenlabsConversationId: { $exists: true } })
+      .select('elevenlabsConversationId')
+      .lean();
+    processed.forEach(i => processedConversations.add(i.elevenlabsConversationId));
+    logger.info(`Loaded ${processedConversations.size} processed conversations from DB`);
   } catch (e) {
     logger.error('Failed to init processed set:', { error: e.message });
   }
 }
 
+// ─── Main poll function (called on interval from server.js) ───
 export async function pollCompletedConversations() {
   try {
     await initProcessedSet();
 
+    // Fetch ALL conversations (no agent_id filter — we have per-org agents now)
     const data = await listConversations(30);
     const conversations = data.conversations || [];
 
     for (const conv of conversations) {
-      // Skip if already processed (in memory or DB)
       if (processedConversations.has(conv.conversation_id)) continue;
-
-      // Skip if still in progress
       if (conv.status === 'processing' || conv.status === 'in-progress') continue;
 
-      // Only process completed conversations
       if (conv.status === 'done' || conv.status === 'completed' || conv.status === 'ended') {
         try {
           await processConversation(conv.conversation_id);
         } catch (err) {
           logger.error('Error processing conversation:', { id: conv.conversation_id, error: err.message });
         }
-        // ALWAYS mark as processed, even if it failed — prevents infinite loop
+        // Always mark as processed to prevent infinite retry
         processedConversations.add(conv.conversation_id);
       }
     }
@@ -59,249 +54,141 @@ export async function pollCompletedConversations() {
   }
 }
 
+// ─── Process a single conversation ───
 async function processConversation(conversationId) {
   try {
-    // Double-check DB — another poll cycle might have processed it
-    const existingInterview = await Interview.findOne({ elevenlabsConversationId: conversationId });
-    if (existingInterview) {
-      logger.debug('Already in DB, skipping:', { conversationId });
+    // Skip if already in DB
+    const existing = await Interview.findOne({ elevenlabsConversationId: conversationId });
+    if (existing) {
+      logger.info('Conversation already processed:', { conversationId });
       return;
     }
 
     logger.info('Processing new conversation:', { conversationId });
     const { transcript, duration } = await getConversationTranscript(conversationId);
 
-    // Clean transcript — remove empty entries and disconnect spam
-    const cleanTranscript = (transcript || []).filter(t => t.text && t.text.trim() !== '' && t.text !== '...');
+    // Clean transcript — remove empty entries and disconnect noise
+    const cleanTranscript = (transcript || []).filter(t =>
+      t.text && t.text.trim() !== '' && t.text !== '...'
+    );
+
     const cutoffIndex = cleanTranscript.findIndex(t =>
       t.text.includes('end the interview here') ||
       t.text.includes('lost connection') ||
       t.text.includes('seems like you might have stepped away')
     );
-    const finalTranscript = cutoffIndex > 0 ? cleanTranscript.slice(0, cutoffIndex + 1) : cleanTranscript;
+    const finalTranscript = cutoffIndex > 0
+      ? cleanTranscript.slice(0, cutoffIndex + 1)
+      : cleanTranscript;
 
     // Skip very short conversations (less than 4 meaningful entries)
     if (!finalTranscript || finalTranscript.length < 4) {
-      logger.info('Skipping short conversation:', { conversationId, entries: finalTranscript?.length || 0 });
+      logger.info('Skipping short conversation:', {
+        conversationId,
+        entries: finalTranscript?.length || 0
+      });
       return;
     }
 
-    // Count actual candidate responses (not just AI talking)
-    const candidateResponses = finalTranscript.filter(t => t.speaker === 'candidate' && t.text.length > 5).length;
+    // Count actual candidate responses
+    const candidateResponses = finalTranscript.filter(
+      t => t.speaker === 'candidate' && t.text.length > 5
+    ).length;
     if (candidateResponses < 2) {
       logger.info('Skipping — too few candidate responses:', { conversationId, candidateResponses });
       return;
     }
 
+    // Try to find the company (for scorecard context)
     const company = await Company.findOne({});
-    if (!company) return;
+
+    // Detect candidate name from transcript
+    const candidateName = detectCandidateName(finalTranscript);
 
     // Detect role from transcript
-    const role = await detectRoleFromTranscript(finalTranscript, company._id);
-    if (!role) {
-      logger.warn('Could not detect role:', { conversationId });
-      return;
-    }
+    const role = detectRoleFromTranscript(finalTranscript);
 
-    // Extract candidate name
-    const candidateName = extractCandidateName(finalTranscript) || 'Inbound Caller';
-
-    // Create interview record
-    const interview = await Interview.create({
-      companyId: company._id,
-      roleId: role._id,
-      candidate: { name: candidateName },
-      channel: 'phone',
-      status: 'in_progress',
-      startedAt: new Date(Date.now() - (duration * 1000)),
-      elevenlabsConversationId: conversationId,
-      metadata: { source: 'inbound_call', customFields: { roleTitle: role.title } }
-    });
-
-    await Role.findByIdAndUpdate(role._id, { $inc: { 'stats.totalCandidates': 1 } });
-    logger.info('Created interview:', { interviewId: interview._id, detectedRole: role.title, candidateName });
-
-    // Generate scorecard
-    logger.info('Generating scorecard:', { interviewId: interview._id, conversationId });
-
-    let scorecard;
+    // ─── Generate scorecard via OpenAI ───
+    let scorecard = null;
     try {
-      scorecard = await generateScorecard({ ...interview.toObject(), transcript: finalTranscript }, role);
-    } catch (scoreErr) {
-      logger.error('Scorecard error:', { message: scoreErr.message });
-      scorecard = {
-        overallScore: 0, recommendation: 'consider', dimensionScores: [],
-        aiSummary: 'Scorecard generation failed: ' + scoreErr.message,
-        strengths: [], concerns: [], redFlagsDetected: [], dealBreakersTriggered: []
-      };
-    }
-
-    // Update role stats
-    try {
-      const avgResult = await Interview.aggregate([
-        { $match: { roleId: role._id, status: 'completed', 'scorecard.overallScore': { $gt: 0 } } },
-        { $group: { _id: null, avg: { $avg: '$scorecard.overallScore' }, count: { $sum: 1 } } }
-      ]);
-
-      await Role.findByIdAndUpdate(role._id, {
-        'stats.completedInterviews': (avgResult[0]?.count || 0) + 1,
-        'stats.averageScore': Math.round(avgResult[0]?.avg || scorecard.overallScore),
-        'stats.averageDuration': duration
+      logger.info('Generating scorecard:', { conversationId });
+      scorecard = await generateScorecard(finalTranscript, {
+        role: role || 'General',
+        company: company?.name || 'Unknown'
       });
     } catch (e) {
-      logger.warn('Failed to update role stats:', { error: e.message });
+      logger.error('Scorecard generation failed:', { conversationId, error: e.message });
     }
 
-    // Save completed interview
-    await Interview.findByIdAndUpdate(interview._id, {
-      transcript: finalTranscript,
-      durationSeconds: duration,
-      completedAt: new Date(),
+    // ─── Save Interview to MongoDB ───
+    const interview = new Interview({
+      elevenlabsConversationId: conversationId,
+      candidateName: candidateName || 'Unknown Candidate',
+      role: role || 'Open Position',
+      company: company?._id,
+      companyName: company?.name || 'Unknown',
+      duration: duration || 0,
       status: 'completed',
-      scorecard
+      completedAt: new Date(),
+
+      // THE KEY PART — save the full transcript array
+      transcript: finalTranscript.map(t => ({
+        speaker: t.speaker,  // 'ai' or 'candidate'
+        text: t.text,
+        timestamp: t.timestamp || 0
+      })),
+
+      // Save scorecard if generated
+      scorecard: scorecard || null,
     });
 
-    logger.info('Interview finalized:', {
+    await interview.save();
+    logger.info('Interview saved to DB:', {
+      conversationId,
       interviewId: interview._id,
-      score: scorecard.overallScore,
-      recommendation: scorecard.recommendation,
-      role: role.title,
-      candidate: candidateName
+      candidateName,
+      role,
+      transcriptEntries: finalTranscript.length,
+      hasScorecard: !!scorecard
     });
 
-  } catch (fatalError) {
-    logger.error('FATAL in processConversation:', { conversationId, message: fatalError.message });
+  } catch (error) {
+    logger.error('processConversation failed:', { conversationId, error: error.message });
+    throw error;
   }
 }
 
-// ─── Detect role from CANDIDATE's words and AI's questions ───
-async function detectRoleFromTranscript(transcript, companyId) {
-  const roles = await Role.find({ companyId, status: 'active' });
-  if (roles.length === 0) return null;
-  if (roles.length === 1) return roles[0];
-
-  // ONLY check what the CANDIDATE said (first 10 entries)
-  // The AI greeting mentions ALL roles, so we ignore AI text for title matching
-  const candidateEntries = transcript
-    .slice(0, 12)
-    .filter(t => t.speaker === 'candidate');
-
-  const candidateText = candidateEntries.map(t => t.text.toLowerCase()).join(' ');
-
-  // Pass 1: exact role title in candidate's words
-  for (const role of roles) {
-    if (candidateText.includes(role.title.toLowerCase())) {
-      logger.info('Role detected — candidate said title:', { roleTitle: role.title });
-      return role;
-    }
-  }
-
-  // Pass 2: key title words in candidate's words (need 2+ matches)
-  for (const role of roles) {
-    const words = role.title.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    const matches = words.filter(w => candidateText.includes(w)).length;
-    if (matches >= 2 || (words.length === 1 && matches === 1)) {
-      logger.info('Role detected — candidate title keywords:', { roleTitle: role.title, matches });
-      return role;
-    }
-  }
-
-  // Pass 3: match AI questions to role-specific questions
-  // Only look at AI questions AFTER the greeting (skip first 2 AI messages which mention all roles)
-  const aiMessages = transcript.filter(t => t.speaker === 'ai');
-  const aiQuestionText = aiMessages.slice(2).map(t => t.text.toLowerCase()).join(' ');
-
-  let bestRole = null;
-  let bestScore = 0;
-
-  for (const role of roles) {
-    let score = 0;
-
-    // Match distinctive question words (6+ chars to avoid common words)
-    for (const q of role.questions || []) {
-      const keyWords = q.text.toLowerCase().split(/\s+/).filter(w => w.length > 6);
-      for (const word of keyWords) {
-        if (aiQuestionText.includes(word)) score += 2;
-      }
-      // Match expected topics
-      for (const topic of q.expectedTopics || []) {
-        if (topic.length > 4 && aiQuestionText.includes(topic.toLowerCase())) score += 4;
-      }
-    }
-
-    // PENALTY: if the candidate said something that clearly indicates a DIFFERENT role
-    // e.g., candidate says "administrative" but this role is "Customer Support"
-    const otherRoles = roles.filter(r => r._id.toString() !== role._id.toString());
-    for (const other of otherRoles) {
-      const otherTitle = other.title.toLowerCase();
-      if (candidateText.includes(otherTitle)) {
-        score -= 20; // Heavy penalty — candidate explicitly said another role
-      }
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestRole = role;
-    }
-  }
-
-  if (bestRole && bestScore > 5) {
-    logger.info('Role detected — AI question matching:', { roleTitle: bestRole.title, score: bestScore });
-    return bestRole;
-  }
-
-  // Last resort: check which role's questions appear most in the full transcript
-  logger.warn('Weak role detection, using best guess:', { bestRole: bestRole?.title, score: bestScore });
-  return bestRole || roles[0];
-}
-
-// ─── Extract candidate name ───
-function extractCandidateName(transcript) {
-  const candidateEntries = transcript
+// ─── Detect candidate name from transcript ───
+function detectCandidateName(transcript) {
+  // Look for early candidate responses that might contain a name
+  const earlyResponses = transcript
     .filter(t => t.speaker === 'candidate')
-    .slice(0, 5);
+    .slice(0, 3);
 
-  for (const entry of candidateEntries) {
-    const text = entry.text;
-    const patterns = [
-      /(?:my name is|i'm|i am|this is|call me|it's|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/,
-      /(?:my name is|i'm|i am|this is|call me|it's|name's)\s+([a-z]+(?:\s+[a-z]+)?)/i,
-      /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*[.,!]?\s*$/,
-    ];
+  for (const r of earlyResponses) {
+    const text = r.text.trim();
+    // Common patterns: "My name is John", "I'm John", "Hi, John here", just "John Smith"
+    const nameMatch = text.match(/(?:my name is|i'm|i am|this is|it's|hey,?\s*i'm)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+    if (nameMatch) return nameMatch[1];
 
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match && match[1] && match[1].length > 1 && match[1].length < 40) {
-        const name = match[1].trim();
-        const skip = ['yes', 'no', 'hello', 'hi', 'hey', 'sure', 'okay', 'ok', 'yeah', 'thank', 'thanks',
-          'good', 'fine', 'well', 'the', 'customer', 'support', 'administrative', 'assistant',
-          'i', 'we', 'they', 'that', 'this', 'what', 'when', 'where', 'how', 'why'];
-        if (skip.includes(name.toLowerCase())) continue;
-        const formatted = name.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
-        return formatted;
-      }
+    // If it's a very short response (just a name), might be the name
+    if (text.split(' ').length <= 3 && text.length < 30 && /^[A-Z]/.test(text)) {
+      return text.replace(/[.,!?]$/g, '');
     }
   }
   return null;
 }
 
-// ─── Polling lifecycle ───
-let pollingInterval = null;
+// ─── Detect role from transcript ───
+function detectRoleFromTranscript(transcript) {
+  const aiMessages = transcript.filter(t => t.speaker === 'ai').slice(0, 5);
+  const allText = aiMessages.map(t => t.text).join(' ');
 
-export function startPolling(intervalMs = 30000) {
-  if (pollingInterval) return;
-  logger.info('Starting conversation poller:', { intervalMs });
-  // Delay first run by 5 seconds to let server fully boot
-  setTimeout(() => pollCompletedConversations(), 5000);
-  pollingInterval = setInterval(pollCompletedConversations, intervalMs);
+  // Look for role mentions in AI's intro
+  const roleMatch = allText.match(/(?:for the|for a|the)\s+([A-Z][^.!?]{3,40})\s+(?:position|role|opening|interview)/i);
+  if (roleMatch) return roleMatch[1].trim();
+
+  return null;
 }
 
-export function stopPolling() {
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
-    logger.info('Conversation poller stopped');
-  }
-}
-
-export default { pollCompletedConversations, startPolling, stopPolling };
+export default { pollCompletedConversations };
