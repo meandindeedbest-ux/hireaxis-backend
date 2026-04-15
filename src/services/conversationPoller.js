@@ -4,6 +4,7 @@ import { generateScorecard } from './llmService.js';
 import { Interview } from '../models/Interview.js';
 import { Role } from '../models/Role.js';
 import { Company } from '../models/Company.js';
+import { sendTranscriptEmail } from '../services/emailService.js';
 
 // Track processed conversations in memory AND check database
 const processedConversations = new Set();
@@ -168,6 +169,23 @@ async function processConversation(conversationId) {
       role: role.title,
       candidate: candidateName
     });
+
+    // Send transcript + scorecard email to company
+    try {
+      const emailTo = company.email || process.env.NOTIFICATION_EMAIL || 'meandindeedbest@gmail.com';
+      await sendTranscriptEmail({
+        to: emailTo,
+        candidateName,
+        role: role.title,
+        companyName: company.name,
+        transcript: finalTranscript,
+        scorecard,
+        duration,
+        interviewId: interview._id
+      });
+    } catch (emailErr) {
+      logger.error('Transcript email failed:', { error: emailErr.message });
+    }
 
   } catch (fatalError) {
     logger.error('FATAL in processConversation:', { conversationId, message: fatalError.message });

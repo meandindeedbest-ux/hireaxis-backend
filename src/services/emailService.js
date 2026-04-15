@@ -128,3 +128,58 @@ export default {
   sendScorecardEmail,
   sendCandidateRegistrationEmail,
 };
+
+
+export async function sendTranscriptEmail({ to, candidateName, role, companyName, transcript, scorecard, duration, interviewId }) {
+  const mins = Math.floor((duration || 0) / 60);
+  const secs = (duration || 0) % 60;
+
+  // Build transcript HTML
+  const transcriptHtml = (transcript || []).map((t, i) => {
+    const speaker = t.speaker === 'ai' ? 'Interviewer' : candidateName;
+    const color = t.speaker === 'ai' ? '#5b6cf7' : '#0fd492';
+    const time = t.timestamp ? `${Math.floor(t.timestamp / 60)}:${String(t.timestamp % 60).padStart(2, '0')}` : '';
+    return `<div style="margin-bottom:12px;padding:10px 14px;background:${t.speaker === 'ai' ? '#0a0b12' : '#0d1117'};border-left:3px solid ${color};border-radius:0 8px 8px 0">
+      <div style="font-size:11px;font-weight:600;color:${color};margin-bottom:4px">${speaker} ${time ? `<span style="color:#555873;font-weight:400">· ${time}</span>` : ''}</div>
+      <div style="font-size:14px;color:#cccde0;line-height:1.5">${t.text}</div>
+    </div>`;
+  }).join('');
+
+  // Build scorecard summary
+  const scoreHtml = scorecard ? `
+    <div style="background:#06070a;border:1px solid #1a1c2e;border-radius:12px;padding:20px;margin-bottom:24px">
+      <div style="text-align:center;margin-bottom:16px">
+        <div style="font-size:42px;font-weight:800;color:${scorecard.overallScore >= 70 ? '#0fd492' : scorecard.overallScore >= 50 ? '#f5a623' : '#e74c3c'}">${scorecard.overallScore}</div>
+        <div style="font-size:12px;color:#7a7d9a;text-transform:uppercase;letter-spacing:0.08em">Overall Score · ${scorecard.recommendation?.replace('_', ' ')}</div>
+      </div>
+      ${(scorecard.dimensionScores || []).map(d => `
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1a1c2e">
+          <span style="font-size:13px;color:#cccde0">${d.dimension}</span>
+          <span style="font-size:13px;font-weight:700;color:${d.score >= 70 ? '#0fd492' : d.score >= 50 ? '#f5a623' : '#e74c3c'}">${d.score}</span>
+        </div>
+      `).join('')}
+      ${scorecard.aiSummary ? `<div style="margin-top:16px;font-size:13px;color:#7a7d9a;line-height:1.6">${scorecard.aiSummary}</div>` : ''}
+      ${scorecard.strengths?.length ? `<div style="margin-top:12px"><div style="font-size:11px;font-weight:600;color:#0fd492;margin-bottom:6px">STRENGTHS</div>${scorecard.strengths.map(s => `<div style="font-size:13px;color:#cccde0;margin-bottom:4px">✓ ${s}</div>`).join('')}</div>` : ''}
+      ${scorecard.concerns?.length ? `<div style="margin-top:12px"><div style="font-size:11px;font-weight:600;color:#e74c3c;margin-bottom:6px">CONCERNS</div>${scorecard.concerns.map(c => `<div style="font-size:13px;color:#cccde0;margin-bottom:4px">⚠ ${c}</div>`).join('')}</div>` : ''}
+    </div>
+  ` : '';
+
+  return sendEmail({
+    to,
+    subject: `Interview Complete: ${candidateName} — ${role} (Score: ${scorecard?.overallScore || 'N/A'})`,
+    html: baseTemplate(`
+      <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#eeeef5">Interview Complete</h1>
+      <p style="margin:0 0 24px;font-size:15px;color:#7a7d9a;line-height:1.6">
+        <strong style="color:#eeeef5">${candidateName}</strong> completed their interview for
+        <strong style="color:#eeeef5">${role}</strong> at ${companyName}.
+        Duration: ${mins}m ${secs}s
+      </p>
+      ${scoreHtml}
+      <h2 style="margin:24px 0 16px;font-size:16px;font-weight:700;color:#eeeef5">Full Interview Transcript</h2>
+      <div style="margin-bottom:20px">${transcriptHtml}</div>
+      <div style="text-align:center;padding-top:16px">
+        <a href="https://hireaxis-dashboard.vercel.app" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#5b6cf7,#0fd492);color:#fff;font-weight:600;font-size:14px;text-decoration:none;border-radius:10px">View on Dashboard</a>
+      </div>
+    `, \`Interview complete: \${candidateName} scored \${scorecard?.overallScore || 'N/A'} for \${role}\`)
+  });
+}
