@@ -6,9 +6,9 @@
 
 import { listConversations, getConversationTranscript } from './elevenlabsService.js';
 import Interview from '../models/Interview.js';
-import Company from '../models/Company.js';
+import { Company } from '../models/Company.js';
 import { generateScorecard } from './llmService.js';
-import logger from '../utils/logger.js';
+import { logger } from '../utils/logger.js';
 
 // In-memory set of processed conversation IDs (persisted in DB too)
 const processedConversations = new Set();
