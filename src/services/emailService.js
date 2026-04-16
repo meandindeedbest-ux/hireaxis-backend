@@ -122,12 +122,6 @@ export async function sendCandidateRegistrationEmail(adminEmail, info) {
   });
 }
 
-export default {
-  sendVerificationEmail,
-  sendWelcomeEmail,
-  sendScorecardEmail,
-  sendCandidateRegistrationEmail,
-};
 
 
 export async function sendTranscriptEmail({ to, candidateName, role, companyName, transcript, scorecard, duration, interviewId }) {
@@ -180,6 +174,8 @@ export async function sendTranscriptEmail({ to, candidateName, role, companyName
       <div style="text-align:center;padding-top:16px">
         <a href="https://hireaxis-dashboard.vercel.app" style="display:inline-block;padding:12px 28px;background:linear-gradient(135deg,#5b6cf7,#0fd492);color:#fff;font-weight:600;font-size:14px;text-decoration:none;border-radius:10px">View on Dashboard</a>
       </div>
-    `, `Interview complete: ${candidateName} scored \${scorecard?.overallScore || 'N/A'} for \${role}\`)
+    `, `Interview complete: ${candidateName} scored ${scorecard?.overallScore || 'N/A'} for ${role}`)
   });
 }
+
+export default { sendVerificationEmail, sendWelcomeEmail, sendScorecardEmail, sendCandidateRegistrationEmail, sendTranscriptEmail };
