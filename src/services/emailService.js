@@ -178,4 +178,23 @@ export async function sendTranscriptEmail({ to, candidateName, role, companyName
   });
 }
 
-export default { sendVerificationEmail, sendWelcomeEmail, sendScorecardEmail, sendCandidateRegistrationEmail, sendTranscriptEmail };
+
+export async function sendPasswordResetEmail(email, name, resetUrl) {
+  return sendEmail({
+    to: email,
+    subject: 'Reset your HireAxis password',
+    html: baseTemplate(`
+      <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#eeeef5">Reset your password</h1>
+      <p style="margin:0 0 28px;font-size:15px;color:#7a7d9a;line-height:1.6">
+        Hi ${name}, we received a request to reset your HireAxis password.
+        Click the button below to choose a new password. This link expires in <strong style="color:#eeeef5">1 hour</strong>.
+      </p>
+      <div style="text-align:center;margin-bottom:28px">
+        <a href="${resetUrl}" style="display:inline-block;padding:14px 32px;background:linear-gradient(135deg,#5b6cf7,#0fd492);color:#fff;font-weight:700;font-size:15px;text-decoration:none;border-radius:10px">Reset my password</a>
+      </div>
+      <p style="margin:0;font-size:12px;color:#555873">If you didn't request a password reset, ignore this email.</p>
+    `, `Reset your HireAxis password`)
+  });
+}
+
+export default { sendVerificationEmail, sendWelcomeEmail, sendScorecardEmail, sendCandidateRegistrationEmail, sendTranscriptEmail, sendPasswordResetEmail };

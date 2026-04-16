@@ -1,3 +1,4 @@
+import { validateScraperUrl, validateAdminSecret } from '../middleware/security.js';
 // ═══════════════════════════════════════════════════════════════
 // HIREAXIS ADMIN ROUTES v2 — /api/admin/*
 // Enhanced: brand extraction, slug routing, full white-label
@@ -15,6 +16,7 @@ import OpenAI from "openai";
 import { syncAgentForOrg, deleteAgent as deleteElevenLabsAgent, getAvailableVoices } from '../services/elevenlabs-sync.js';
 
 const router = Router();
+router.use(validateAdminSecret);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const JWT_SECRET = process.env.JWT_SECRET || "hireaxis_secret_key";

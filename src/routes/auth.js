@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuid } from 'uuid';
 import { Company, User } from '../models/Company.js';
 import { generateToken } from '../middleware/auth.js';
-import { sendVerificationEmail, sendWelcomeEmail } from '../services/emailService.js';
+import { sendVerificationEmail, sendWelcomeEmail, sendPasswordResetEmail } from '../services/emailService.js';
 import { logger } from '../utils/logger.js';
 
 const router = Router();
@@ -196,3 +196,49 @@ router.get('/me', async (req, res) => {
 });
 
 export default router;
+
+// POST /api/auth/forgot-password
+router.post('/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) return res.json({ message: 'If that email exists, a reset link has been sent.' });
+    const crypto = (await import('crypto')).default;
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenHash = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.passwordResetToken = resetTokenHash;
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+    await user.save();
+    const resetUrl = `${process.env.DASHBOARD_URL || 'https://hireaxis-dashboard.vercel.app'}#reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+    await sendPasswordResetEmail(email, user.name, resetUrl);
+    logger.info('Password reset requested:', { email });
+    res.json({ message: 'If that email exists, a reset link has been sent.' });
+  } catch (error) {
+    logger.error('Forgot password error:', { error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/auth/reset-password
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, email, password } = req.body;
+    if (!token || !email || !password) return res.status(400).json({ error: 'Token, email and password are required' });
+    if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    const crypto = (await import('crypto')).default;
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const user = await User.findOne({ email: email.toLowerCase().trim(), passwordResetToken: tokenHash, passwordResetExpires: { $gt: new Date() } });
+    if (!user) return res.status(400).json({ error: 'Invalid or expired reset token.' });
+    user.password = await bcrypt.hash(password, 12);
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+    logger.info('Password reset successful:', { email });
+    res.json({ message: 'Password updated successfully.' });
+  } catch (error) {
+    logger.error('Reset password error:', { error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
