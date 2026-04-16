@@ -11,7 +11,7 @@ import twilio from 'twilio';
 const router = Router();
 
 // POST /api/twilio/incoming — IVR Menu: caller selects which role to interview for
-router.post('/incoming', validateTwilioSignature,, async (req, res) => {
+router.post('/incoming', validateTwilioSignature, async (req, res) => {
   try {
     const { From, CallSid, To } = req.body;
     logger.info('Inbound call received:', { from: From, callSid: CallSid, to: To });
@@ -115,7 +115,7 @@ router.post('/incoming', validateTwilioSignature,, async (req, res) => {
 });
 
 // POST /api/twilio/role-select — Handle IVR selection, sync agent, connect to interview
-router.post('/role-select', validateTwilioSignature,, async (req, res) => {
+router.post('/role-select', validateTwilioSignature, async (req, res) => {
   try {
     const { Digits, From, CallSid } = req.body;
     const selection = parseInt(Digits, 10);
@@ -187,7 +187,7 @@ router.post('/connect-agent', async (req, res) => {
 });
 
 // POST /api/twilio/status — Call status updates
-router.post('/status', validateTwilioSignature,, async (req, res) => {
+router.post('/status', validateTwilioSignature, async (req, res) => {
   try {
     const { CallSid, CallStatus, CallDuration } = req.body;
     logger.info('Call status update:', { callSid: CallSid, status: CallStatus, duration: CallDuration });
