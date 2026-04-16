@@ -59,9 +59,9 @@ const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   companyId: { type: mongoose.Schema.Types.ObjectId, ref: 'Company', required: true },
   role: { type: String, enum: ['admin', 'recruiter', 'viewer'], default: 'recruiter' },
-  emailVerified: { type: Boolean
+  emailVerified: { type: Boolean, default: false },
   passwordResetToken: String,
-  passwordResetExpires: Date,, default: false },
+  passwordResetExpires: Date,
   verificationCode: { type: String, default: null },
   verificationCodeExpiry: { type: Date, default: null }
 }, { timestamps: true });
